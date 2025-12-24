@@ -6,57 +6,61 @@ import { User } from "../models/User.js";
 import { EmailVerification } from "../models/EmailVerification.js";
 import { transporter } from "../utils/emailTransporter.js";
 import { createJWT } from "../utils/jwtAuth.js";
-import { generateVerificationString } from "../utils/verifCode.js"
+import { generateVerificationString } from "../utils/verifCode.js";
 
+export async function requestEmailVerification(req, res, next) {
+  const username = req.body.username;
+  const email = validator.normalizeEmail(req.body.email);
+  const password = req.body.password;
+  const confirmPassword = req.body.confirmPassword;
 
-export async function requestEmailVerification(req, res, next){
+  //! input validation :
+  if (!username || !email || !password || !confirmPassword) {
+    return res.status(422).json({ message: "All fields are required." });
+  } else if (await User.findOne({ username: username })) {
+    res.status(409).json({ message: "Username already in use." });
+  } else if (!validator.isLength(username, { min: 5, max: 20 })) {
+    return res
+      .status(422)
+      .json({ message: "Username must be 5-20 characters long." });
+  } else if (
+    !validator.isAlphanumeric(username.replace(/\s+/g, "").trim(), "en-US", {
+      ignore: "_.-",
+    })
+  ) {
+    return res
+      .status(422)
+      .json({ message: "Username contains invalid characters." });
+  } else if (!validator.isEmail(email)) {
+    return res.status(422).json({ message: "Invalid email address." });
+  } else if (await User.findOne({ email: email })) {
+    return res.status(409).json({ message: "Email address already in use." });
+  } else if (!validator.isLength(password, { min: 8, max: 30 })) {
+    return res
+      .status(422)
+      .json({ message: "Password must be 8-30 characters long." });
+  } else if (
+    !validator.isStrongPassword(password, {
+      minNumbers: 1,
+      minUppercase: 1,
+      minSymbols: 0,
+    })
+  ) {
+    return res.status(422).json({
+      message: "Password must include uppercase, lowercase and number.",
+    });
+  } else if (confirmPassword !== password) {
+    return res.status(422).json({ message: "Passwords do not match." });
+  }
 
-    const username = req.body.username;
-    const email = validator.normalizeEmail(req.body.email);
-    const password = req.body.password;
-    const confirmPassword = req.body.confirmPassword; 
+  // ! generate & send verification code:
+  const verificationCode = generateVerificationString();
 
-    //! input validation : 
-    if (!username || !email || !password || !confirmPassword) {
-        return res.status(422).json({ message: "All fields are required." });
-    }
-    else if(await User.findOne({username: username})){
-        res.status(409).json({message: "Username already in use."});
-    }
-    else if(!validator.isLength(username, {min: 5, max: 20})){
-        return res.status(422).json({message: "Username must be 5-20 characters long."});
-    }
-    else if(!validator.isAlphanumeric(username.replace(/\s+/g, '').trim() , "en-US", { ignore: "_.-" })){
-        return res.status(422).json({message: "Username contains invalid characters."});
-    }
-    else if(!validator.isEmail(email)){
-        return res.status(422).json({message: "Invalid email address."});
-    }
-    else if(await User.findOne({email: email})){
-        return res.status(409).json({message: "Email address already in use."});
-    }
-    else if(!validator.isLength(password, {min: 8, max: 30})){
-        return res.status(422).json({message: "Password must be 8-30 characters long."});
-    }
-    else if(!validator.isStrongPassword(password, {
-        minNumbers: 1,
-        minUppercase: 1,
-        minSymbols: 0
-    })){
-        return res.status(422).json({message: "Password must include uppercase, lowercase and number."})
-    }
-    else if(confirmPassword !== password){
-        return res.status(422).json({message: "Passwords do not match."});
-    }    
-
-    // ! generate & send verification code: 
-    const verificationCode = generateVerificationString();
-      
-    transporter.sendMail({
-        from: "DevTalk team <dev-talk@gmail.com>",
-        to: email,
-        subject: 'Verify your DevTalk account',
-        html: `
+  transporter.sendMail({
+    from: "DevTalk team <dev-talk@gmail.com>",
+    to: email,
+    subject: "Verify your DevTalk account",
+    html: `
            <div style="font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f4f4; padding: 10px; text-align: center;">
                 <div style="max-width: 520px; margin: auto; background-color: #ffffff; border-radius: 14px; box-shadow: 0 6px 14px rgba(0,0,0,0.1); overflow: hidden;">
 
@@ -92,86 +96,87 @@ export async function requestEmailVerification(req, res, next){
                     </div>
 
                 </div>
-            </div>`
-    })
+            </div>`,
+  });
 
-    //! password hashing: 
-    const hashedPassword = await bcrypt.hash(password, 12);
+  //! password hashing:
+  const hashedPassword = await bcrypt.hash(password, 12);
 
-    //! save verification info in db:
-    const emailVerification = new EmailVerification({
-        username: username,
-        email: email,
-        password: hashedPassword,
-        code: verificationCode,
-        expiresAt: new Date(Date.now() + 3 * 60 * 1000)  // code will expire after 3mins
+  //! save verification info in db:
+  const emailVerification = new EmailVerification({
+    username: username,
+    email: email,
+    password: hashedPassword,
+    code: verificationCode,
+    expiresAt: new Date(Date.now() + 3 * 60 * 1000), // code will expire after 3mins
+  });
+
+  emailVerification.save();
+  res.status(200).json({ message: `Verfication code sent to: ${email}` });
+}
+
+export async function verifyEmailAndCreateUser(req, res, next) {
+  const email = req.body.email;
+  const verificationCode = req.body.verificationCode;
+  let user;
+
+  // ! verify the code validity
+  const emailVerification = await EmailVerification.findOne({ email: email });
+  console.log("hey hey");
+
+  if (
+    !emailVerification ||
+    emailVerification.code !== verificationCode ||
+    emailVerification.expiresAt < Date.now()
+  ) {
+    console.log("hey hey");
+    return res.status(401).json({ message: "Invalid or expired code" });
+  }
+  console.log("hey hey");
+
+  try {
+    // ! saving user to db:
+
+    user = new User({
+      username: emailVerification.username,
+      email,
+      password: emailVerification.password,
+      friends: [],
     });
+    await user.save();
+  } catch (err) {
+    console.log(err);
+    return res.status(500).json({ message: "Registration failed." });
+  }
 
-    emailVerification.save();
-    res.status(200).json({message: `Verfication code sent to: ${email}`})
+  //! log the user in:
+  const token = createJWT(user);
+
+  return res.status(201).json({
+    message: "Account created successfully",
+    jwt: token,
+  });
 }
 
+export async function login(req, res, next) {
+  const email = validator.normalizeEmail(req.body.email);
+  const password = req.body.password;
 
-export async function verifyEmailAndCreateUser(req, res, next){
+  const user = await User.findOne({ email: email });
 
-    const username = req.body.username;
-    const email = req.body.email;
-    const verificationCode = req.body.verificationCode;
-    let user;
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return res.status(401).json({ message: "Invalid email or password" });
+  }
 
-    // ! verify the code validity
-    const emailVerification = await EmailVerification.findOne({email: email, username: username});
+  const token = createJWT(user);
 
-    if(!emailVerification || emailVerification.code !== verificationCode || emailVerification.expiresAt < Date.now()){
-        return res.status(401).json({message: "Invalid or expired code"})
-    }
-
-    try{
-        // ! saving user to db: 
-        user = new User({
-            username,
-            email,
-            password: emailVerification.password,
-            friends: []
-        })
-        await user.save();
-
-    }catch(err){
-        console.log(err);
-        return res.status(500).json({message: "Registration failed."});
-    }
-
-    //! log the user in: 
-    const token = createJWT(user);
-
-    return res.status(201).json({
-        message: "Account created successfully",
-        jwt: token
-    });
+  res.status(200).json({
+    message: "Logged in successfully.",
+    jwt: token,
+  });
 }
 
-
-export async function login(req, res, next){
-
-    const email = validator.normalizeEmail(req.body.email);
-    const password = req.body.password;
-
-    const user = await User.findOne({email: email});
-
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-        return res.status(401).json({ message: "Invalid email or password" });
-    }
-
-    const token = createJWT(user);
-
-    res.status(200).json({
-        message: "Logged in successfully.",
-        jwt: token
-    })
-}
-
-
-//! to improve : 
+//! to improve :
 // You imported csrf but didn’t implement it yet
 
 //! to learn:
@@ -180,9 +185,9 @@ export async function login(req, res, next){
 // jwt playlist
 // CORS reqest (preflight)
 
-// ! authentication flow: 
+// ! authentication flow:
 
 // 1st controller: validate input -> send verification email
 // 2nd controller: verify mail -> create user
 // 3rd controller: set user bio
-// 4rh controller: set user profile 
+// 4rh controller: set user profile
