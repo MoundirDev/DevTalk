@@ -174,6 +174,11 @@ export async function login(req, res, next){
 //! to improve : 
 // You imported csrf but didn’t implement it yet
 
+//! to learn:
+// git and github collaboration
+// csrf protection
+// jwt playlist
+// CORS reqest (preflight)
 
 // ! authentication flow: 
 

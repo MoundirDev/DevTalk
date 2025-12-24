@@ -12,6 +12,17 @@ dotenv.config();
 const PORT = process.env.PORT;
 const MONGODB_URI = `mongodb+srv://${process.env.MONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@cluster0.43ajopz.mongodb.net/DevTalk?retryWrites=true&w=majority&appName=Cluster0`;
 
+
+/* ✅ CORS MUST COME FIRST */
+app.use(cors({
+  origin: "http://localhost:5173",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
+
+/* Optional but safe */
+app.options("*", cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
